@@ -15,13 +15,13 @@ import Data.Vect
 {- First, the game state, GState, where the type specifies how many guesses
 are left and how many missing letters there are still to get. -}
 
-data GState = Running Nat Nat | NotRunning
+data GState = Running Nat Nat Nat | NotRunning
 
 data BullsNCows : GState -> Type where
      Init     : BullsNCows NotRunning -- initialising, but not ready
      GameWon  : String -> BullsNCows NotRunning
      GameLost : String -> BullsNCows NotRunning
-     MkH      : (word : String) ->
+     MkG      : (word : String) ->
                 (guesses : Nat) ->
                 (got : List Char) ->
                 (missing : Vect m Char) ->
@@ -34,7 +34,7 @@ instance Show (BullsNCows s) where
     show Init = "Not ready yet"
     show (GameWon w) = "You won! Successfully guessed " ++ w
     show (GameLost w) = "You lost! The word was " ++ w
-    show (MkH w guesses got missing)
+    show (MkG w guesses got missing)
          = let w' = pack (map showGot (unpack w)) in
                w' ++ "\n\n" ++ show guesses ++ " guesses left"
       where showGot : Char -> Char
@@ -53,7 +53,7 @@ letters x with (strM x)
 
 initState : (x : String) -> BullsNCows (Running 6 (length (letters x)))
 initState w = let xs = letters w in
-                  MkH w _ [] (fromList (letters w))
+                  MkG w _ [] (fromList (letters w))
 
 -----------------------------------------------------------------------
 -- RULES
@@ -152,16 +152,16 @@ is in the word, update the vector of missing letters to be the right
 length). -}
 
 instance Handler BullsNCowsRules m where
-    handle (MkH w g got []) Won k = k () (GameWon w)
-    handle (MkH w Z got m) Lost k = k () (GameLost w)
+    handle (MkG w g got []) Won k = k () (GameWon w)
+    handle (MkG w Z got m) Lost k = k () (GameLost w)
 
     handle st Get k = k st st
     handle st (NewWord w) k = k () (initState w)
 
-    handle (MkH w (S g) got m) (Guess x) k =
+    handle (MkG w (S g) got m) (Guess x) k =
       case isElem x m of
-           No _ => k False (MkH w _ got m)
-           Yes p => k True (MkH w _ (x :: got) (shrink m p))
+           No _ => k False (MkG w _ got m)
+           Yes p => k True (MkG w _ (x :: got) (shrink m p))
 
 -----------------------------------------------------------------------
 -- USER INTERFACE 
