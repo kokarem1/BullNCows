@@ -12,10 +12,7 @@ import Data.Vect
 -- GAME STATE
 -----------------------------------------------------------------------
 
-{- First, the game state, GState, where the type specifies how many guesses
-are left and how many missing letters there are still to get. -}
-
-data GState = Running Nat Nat Nat | NotRunning
+data GState = Running Nat Nat | NotRunning
 
 data BullsNCows : GState -> Type where
      Init     : BullsNCows NotRunning -- initialising, but not ready
@@ -41,8 +38,6 @@ instance Show (BullsNCows s) where
             showGot ' ' = '/'
             showGot c = if ((not (isAlpha c)) || (c `elem` got)) then c else '-'
 
-{- Initialise the state with the missing letters in a word -}
-
 total
 letters : String -> List Char
 letters x with (strM x)
@@ -59,19 +54,7 @@ initState w = let xs = letters w in
 -- RULES
 -----------------------------------------------------------------------
 
-{- Now, the rules of the game, written as an Effect. 
-We can think of the rules as giving a protocol that the game player and
-the machine must follow for an implementation of the game to make sense.
--}
-
 data BullsNCowsRules : Effect where
-
--- Rule:
--- Precondition: we can make a guess if we have one or more guess available 
--- (S g) and one or more letters are still missing (S w)
-
--- Postcondition: return whether the character was in the word. If so, reduce
--- the number of missing letters, if not, reduce the number of guesses left
 
      Guess : (x : Char) ->
              sig BullsNCowsRules Bool
@@ -81,33 +64,21 @@ data BullsNCowsRules : Effect where
                              True => (Running (S g) w)
                              False => (Running g (S w))))
 
--- The 'Won' operation requires that there are no missing letters
-
      Won  : sig BullsNCowsRules ()
                 (BullsNCows (Running g 0))
                 (BullsNCows NotRunning)
-
--- The 'Lost' operation requires that there are no guesses left
 
      Lost : sig BullsNCowsRules ()
                 (BullsNCows (Running 0 g))
                 (BullsNCows NotRunning)
 
--- Set up a new game, initialised with 6 guesses and the missing letters in
--- the given word. Note that if there are no letters in the word, we won't
--- be able to run 'Guess'!
-
      NewWord : (w : String) -> 
                sig BullsNCowsRules () h (BullsNCows (Running 6 (length (letters w))))
 
--- Finally, allow us to get the current game state
-     
      Get  : sig BullsNCowsRules h h
 
 BULLSNCOWS : GState -> EFFECT
 BULLSNCOWS h = MkEff (BullsNCows h) BullsNCowsRules
-
--- Promote explicit effects to Eff programs
 
 guess : Char -> Eff Bool
                 [BULLSNCOWS (Running (S g) (S w))]
@@ -145,12 +116,6 @@ shrink (y :: (x :: xs)) (There p) = y :: shrink (x :: xs) p
 -- IMPLEMENTATION OF THE RULES
 -----------------------------------------------------------------------
 
-{- This effect handler simply updates the game state as necessary for
-each operation. 'Guess' is slightly tricky, in that it needs to check
-whether the letter is in the word, and branch accordingly (and if it
-is in the word, update the vector of missing letters to be the right
-length). -}
-
 instance Handler BullsNCowsRules m where
     handle (MkG w g got []) Won k = k () (GameWon w)
     handle (MkG w Z got m) Lost k = k () (GameLost w)
@@ -166,14 +131,6 @@ instance Handler BullsNCowsRules m where
 -----------------------------------------------------------------------
 -- USER INTERFACE 
 -----------------------------------------------------------------------
-
-{- Finally, an implementation of the game which reads user input and calls
-the operations we defined above when appropriate. 
-The type indicates that the game must start in a running state, with some
-guesses available, and get to a not running state (i.e. won or lost). 
-Since we picked a word at random, we can't actually make the assumption there
-were valid letters in it!
--}
 
 soRefl : So x -> (x = True)
 soRefl Oh = Refl 
@@ -203,9 +160,6 @@ game {w=S _}
                               Z => lost
                               (S k) => game
 
-{- Some candidate words. We'll use programming languages. We don't want to
-write the length explicitly, so infer it with a proof search. -}
-
 words : ?wlen 
 words = with Vect ["idris","agda","haskell","miranda",
          "java","javascript","fortran","basic","racket",
@@ -214,8 +168,6 @@ words = with Vect ["idris","agda","haskell","miranda",
 
 wlen = proof search
 
-{- It typechecks! Ship it! -}
-
 runGame : Eff () [BULLSNCOWS NotRunning, RND, SYSTEM, STDIO]
 runGame = do srand !time
              let w = index !(rndFin _) words
@@ -223,17 +175,6 @@ runGame = do srand !time
              game
              putStrLn (show !get)
 
-{- I made a couple of mistakes while writing this. For example, the following 
-were caught by the type checker:
-* Forgetting to check the 'Won' state before continuing with 'game'
-* Accidentally checking the number of missing letters rather than the number
-  of guesses when checking if 'Lost' was callable
--}
-
 main : IO ()
 main = run runGame
-
--- Local Variables:
--- idris-load-packages: ("effects")
--- End:
 
