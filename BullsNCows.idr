@@ -12,25 +12,25 @@ import Data.Vect
 -- GAME STATE
 -----------------------------------------------------------------------
 
-{- First, the game state, HState, where the type specifies how many guesses
+{- First, the game state, GState, where the type specifies how many guesses
 are left and how many missing letters there are still to get. -}
 
-data HState = Running Nat Nat | NotRunning
+data GState = Running Nat Nat | NotRunning
 
-data Hangman : HState -> Type where
-     Init     : Hangman NotRunning -- initialising, but not ready
-     GameWon  : String -> Hangman NotRunning
-     GameLost : String -> Hangman NotRunning
+data BullsNCows : GState -> Type where
+     Init     : BullsNCows NotRunning -- initialising, but not ready
+     GameWon  : String -> BullsNCows NotRunning
+     GameLost : String -> BullsNCows NotRunning
      MkH      : (word : String) ->
                 (guesses : Nat) ->
                 (got : List Char) ->
                 (missing : Vect m Char) ->
-                Hangman (Running guesses m)
+                BullsNCows (Running guesses m)
 
-instance Default (Hangman NotRunning) where
+instance Default (BullsNCows NotRunning) where
     default = Init
 
-instance Show (Hangman s) where
+instance Show (BullsNCows s) where
     show Init = "Not ready yet"
     show (GameWon w) = "You won! Successfully guessed " ++ w
     show (GameLost w) = "You lost! The word was " ++ w
@@ -51,7 +51,7 @@ letters x with (strM x)
           = let xs' = assert_total (letters xs) in
                 if ((not (isAlpha y)) || (y `elem` xs')) then xs' else y :: xs'
 
-initState : (x : String) -> Hangman (Running 6 (length (letters x)))
+initState : (x : String) -> BullsNCows (Running 6 (length (letters x)))
 initState w = let xs = letters w in
                   MkH w _ [] (fromList (letters w))
 
@@ -64,7 +64,7 @@ We can think of the rules as giving a protocol that the game player and
 the machine must follow for an implementation of the game to make sense.
 -}
 
-data HangmanRules : Effect where
+data BullsNCowsRules : Effect where
 
 -- Rule:
 -- Precondition: we can make a guess if we have one or more guess available 
@@ -74,59 +74,59 @@ data HangmanRules : Effect where
 -- the number of missing letters, if not, reduce the number of guesses left
 
      Guess : (x : Char) ->
-             sig HangmanRules Bool
-                 (Hangman (Running (S g) (S w)))
+             sig BullsNCowsRules Bool
+                 (BullsNCows (Running (S g) (S w)))
                  (\inword =>
-                        Hangman (case inword of
+                        BullsNCows (case inword of
                              True => (Running (S g) w)
                              False => (Running g (S w))))
 
 -- The 'Won' operation requires that there are no missing letters
 
-     Won  : sig HangmanRules ()
-                (Hangman (Running g 0))
-                (Hangman NotRunning)
+     Won  : sig BullsNCowsRules ()
+                (BullsNCows (Running g 0))
+                (BullsNCows NotRunning)
 
 -- The 'Lost' operation requires that there are no guesses left
 
-     Lost : sig HangmanRules ()
-                (Hangman (Running 0 g))
-                (Hangman NotRunning)
+     Lost : sig BullsNCowsRules ()
+                (BullsNCows (Running 0 g))
+                (BullsNCows NotRunning)
 
 -- Set up a new game, initialised with 6 guesses and the missing letters in
 -- the given word. Note that if there are no letters in the word, we won't
 -- be able to run 'Guess'!
 
      NewWord : (w : String) -> 
-               sig HangmanRules () h (Hangman (Running 6 (length (letters w))))
+               sig BullsNCowsRules () h (BullsNCows (Running 6 (length (letters w))))
 
 -- Finally, allow us to get the current game state
      
-     Get  : sig HangmanRules h h
+     Get  : sig BullsNCowsRules h h
 
-HANGMAN : HState -> EFFECT
-HANGMAN h = MkEff (Hangman h) HangmanRules
+BULLSNCOWS : GState -> EFFECT
+BULLSNCOWS h = MkEff (BullsNCows h) BullsNCowsRules
 
 -- Promote explicit effects to Eff programs
 
 guess : Char -> Eff Bool
-                [HANGMAN (Running (S g) (S w))]
-                (\inword => [HANGMAN (case inword of
+                [BULLSNCOWS (Running (S g) (S w))]
+                (\inword => [BULLSNCOWS (case inword of
                                         True => Running (S g) w
                                         False => Running g (S w))])
 guess c = call (Main.Guess c)
 
-won :  Eff () [HANGMAN (Running g 0)] [HANGMAN NotRunning]
+won :  Eff () [BULLSNCOWS (Running g 0)] [BULLSNCOWS NotRunning]
 won = call Won
 
-lost : Eff () [HANGMAN (Running 0 g)] [HANGMAN NotRunning]
+lost : Eff () [BULLSNCOWS (Running 0 g)] [BULLSNCOWS NotRunning]
 lost = call Lost
 
-new_word : (w : String) -> Eff () [HANGMAN h] 
-                                  [HANGMAN (Running 6 (length (letters w)))]
+new_word : (w : String) -> Eff () [BULLSNCOWS h] 
+                                  [BULLSNCOWS (Running 6 (length (letters w)))]
 new_word w = call (NewWord w)
 
-get : Eff (Hangman h) [HANGMAN h]
+get : Eff (BullsNCows h) [BULLSNCOWS h]
 get = call Get
 
 -----------------------------------------------------------------------
@@ -151,7 +151,7 @@ whether the letter is in the word, and branch accordingly (and if it
 is in the word, update the vector of missing letters to be the right
 length). -}
 
-instance Handler HangmanRules m where
+instance Handler BullsNCowsRules m where
     handle (MkH w g got []) Won k = k () (GameWon w)
     handle (MkH w Z got m) Lost k = k () (GameLost w)
 
@@ -178,8 +178,8 @@ were valid letters in it!
 soRefl : So x -> (x = True)
 soRefl Oh = Refl 
 
-game : Eff () [HANGMAN (Running (S g) w), STDIO]
-              [HANGMAN NotRunning, STDIO]
+game : Eff () [BULLSNCOWS (Running (S g) w), STDIO]
+              [BULLSNCOWS NotRunning, STDIO]
 game {w=Z} = won 
 game {w=S _}
      = do putStrLn (show !get)
@@ -190,8 +190,8 @@ game {w=S _}
                (Right p) => do putStrLn "Invalid input!"
                                game
   where 
-    processGuess : Char -> Eff () [HANGMAN (Running (S g) (S w)), STDIO] 
-                                  [HANGMAN NotRunning, STDIO] 
+    processGuess : Char -> Eff () [BULLSNCOWS (Running (S g) (S w)), STDIO] 
+                                  [BULLSNCOWS NotRunning, STDIO] 
     processGuess {g} c {w}
       = case !(guess c) of
              True => do putStrLn "Good guess!"
@@ -216,7 +216,7 @@ wlen = proof search
 
 {- It typechecks! Ship it! -}
 
-runGame : Eff () [HANGMAN NotRunning, RND, SYSTEM, STDIO]
+runGame : Eff () [BULLSNCOWS NotRunning, RND, SYSTEM, STDIO]
 runGame = do srand !time
              let w = index !(rndFin _) words
              new_word w
