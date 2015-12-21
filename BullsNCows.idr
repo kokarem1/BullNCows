@@ -20,9 +20,9 @@ data BullsNCows : GState -> Type where
      GameLost : String -> BullsNCows NotRunning
      MkG      : (word : String) ->
                 (guesses : Nat) ->
-                (got : List Char) ->
-                (missing : Vect m Char) ->
-                BullsNCows (Running guesses m)
+                (bulls: Nat) ->
+                (cows: Nat) ->
+                BullsNCows (Running guesses bulls)
 
 instance Default (BullsNCows NotRunning) where
     default = Init
@@ -30,13 +30,10 @@ instance Default (BullsNCows NotRunning) where
 instance Show (BullsNCows s) where
     show Init = "Not ready yet"
     show (GameWon w) = "You won! Successfully guessed " ++ w
-    show (GameLost w) = "You lost! The word was " ++ w
-    show (MkG w guesses got missing)
-         = let w' = pack (map showGot (unpack w)) in
+    show (GameLost w) = "You lost! The number was " ++ w
+    show (MkG w guesses bulls cows)
+         = let w' = show bulls ++ " bulls, " ++ show cows ++ " cows" in
                w' ++ "\n\n" ++ show guesses ++ " guesses left"
-      where showGot : Char -> Char
-            showGot ' ' = '/'
-            showGot c = if ((not (isAlpha c)) || (c `elem` got)) then c else '-'
 
 total
 letters : String -> List Char
@@ -44,11 +41,11 @@ letters x with (strM x)
   letters "" | StrNil = []
   letters (strCons y xs) | (StrCons y xs) 
           = let xs' = assert_total (letters xs) in
-                if ((not (isAlpha y)) || (y `elem` xs')) then xs' else y :: xs'
+                if ((y `elem` xs')) then xs' else y :: xs'
 
 initState : (x : String) -> BullsNCows (Running 6 (length (letters x)))
 initState w = let xs = letters w in
-                  MkG w _ [] (fromList (letters w))
+                  MkG w _ (length (letters w)) 0
 
 -----------------------------------------------------------------------
 -- RULES
@@ -56,13 +53,10 @@ initState w = let xs = letters w in
 
 data BullsNCowsRules : Effect where
 
-     Guess : (x : Char) ->
-             sig BullsNCowsRules Bool
+     Guess : (x : String) ->
+             sig BullsNCowsRules ()
                  (BullsNCows (Running (S g) (S w)))
-                 (\inword =>
-                        BullsNCows (case inword of
-                             True => (Running (S g) w)
-                             False => (Running g (S w))))
+                 (BullsNCows (Running g (S w))) -- (minus (S w) inword)
 
      Won  : sig BullsNCowsRules ()
                 (BullsNCows (Running g 0))
@@ -80,11 +74,9 @@ data BullsNCowsRules : Effect where
 BULLSNCOWS : GState -> EFFECT
 BULLSNCOWS h = MkEff (BullsNCows h) BullsNCowsRules
 
-guess : Char -> Eff Bool
+guess : String -> Eff ()
                 [BULLSNCOWS (Running (S g) (S w))]
-                (\inword => [BULLSNCOWS (case inword of
-                                        True => Running (S g) w
-                                        False => Running g (S w))])
+                [BULLSNCOWS (Running g (S w))]
 guess c = call (Main.Guess c)
 
 won :  Eff () [BULLSNCOWS (Running g 0)] [BULLSNCOWS NotRunning]
@@ -101,37 +93,54 @@ get : Eff (BullsNCows h) [BULLSNCOWS h]
 get = call Get
 
 -----------------------------------------------------------------------
--- SHRINK
+-- BULLSCOUNT COWSCOUNT
 -----------------------------------------------------------------------
 
-instance Uninhabited (Elem x []) where
-    uninhabited Here impossible
+bullsCount : String -> String -> Nat
+bullsCount "" _ = 0
+bullsCount _ "" = 0
+bullsCount s1 s2 = let c1 = strHead s1 in let c2 = strHead s2 in
+                   (if (c1 == c2)
+                       then 1
+                       else 0)
+                   +
+                   bullsCount (strTail s1) (strTail s2)
 
-shrink : (xs : Vect (S n) a) -> Elem x xs -> Vect n a
-shrink (x :: ys) Here = ys
-shrink (y :: []) (There p) = absurd p
-shrink (y :: (x :: xs)) (There p) = y :: shrink (x :: xs) p
+cowsCount : String -> String -> Nat
+cowsCount g w = (cowsCount' g w) - (bullsCount g w)
+    where
+        cowsCount' : String -> String -> Nat
+        cowsCount' "" _ = 0
+        cowsCount' _ "" = 0
+        cowsCount' g w = let c = strHead g in
+                        (if (inString c w)
+                            then 1
+                            else 0)
+                        +
+                        cowsCount' (strTail g) w
+                        where
+                            inString : Char -> String -> Bool
+                            inString c s = elem c (unpack s)
 
 -----------------------------------------------------------------------
 -- IMPLEMENTATION OF THE RULES
 -----------------------------------------------------------------------
 
 instance Handler BullsNCowsRules m where
-    handle (MkG w g got []) Won k = k () (GameWon w)
-    handle (MkG w Z got m) Lost k = k () (GameLost w)
+    handle (MkG w g Z Z) Won k = k () (GameWon w)
+    handle (MkG w Z b c) Lost k = k () (GameLost w)
 
     handle st Get k = k st st
     handle st (NewWord w) k = k () (initState w)
 
-    handle (MkG w (S g) got m) (Guess x) k =
-      case isElem x m of
-           No _ => k False (MkG w _ got m)
-           Yes p => k True (MkG w _ (x :: got) (shrink m p))
+    handle (MkG w (S g) (S b) c) (Guess x) k =
+      let bC = bullsCount x w in
+      k () (MkG w _ bC (cowsCount x w))
 
 -----------------------------------------------------------------------
 -- USER INTERFACE 
 -----------------------------------------------------------------------
-
+{-
 soRefl : So x -> (x = True)
 soRefl Oh = Refl 
 
@@ -177,4 +186,4 @@ runGame = do srand !time
 
 main : IO ()
 main = run runGame
-
+-}
