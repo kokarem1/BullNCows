@@ -4,6 +4,7 @@ import Effects
 import Effect.System
 import Effect.StdIO
 import Effect.Random
+import Effect.Exception
 import Data.So
 import Data.Fin
 import Data.Vect
@@ -135,17 +136,17 @@ instance Handler BullsNCowsRules m where
 soRefl : So x -> (x = True)
 soRefl Oh = Refl 
 
-game : Eff () [BULLSNCOWS (Running (S g) w), STDIO]
+game : String -> Eff () [BULLSNCOWS (Running (S g) w), STDIO]
               [BULLSNCOWS NotRunning, STDIO]
-game {w=Z} = won 
-game {w=S _}
+game str {w=Z} = won 
+game str {w=S _}
      = do putStrLn (show !get)
           putStr "Enter guess: "
-          let guess = trim !getStr
+          let guess = trim str
           case choose (not (guess == "")) of
                (Left p) => processGuess (strHead' guess (soRefl p))
                (Right p) => do putStrLn "Invalid input!"
-                               game
+                               game str
   where 
     processGuess : Char -> Eff () [BULLSNCOWS (Running (S g) (S w)), STDIO] 
                                   [BULLSNCOWS NotRunning, STDIO] 
@@ -154,11 +155,11 @@ game {w=S _}
              True => do putStrLn "Good guess!"
                         case w of
                              Z => won
-                             (S k) => game
+                             (S k) => game (strTail str)
              False => do putStrLn "No, sorry"
                          case g of
                               Z => lost
-                              (S k) => game
+                              (S k) => game (strTail str)
 
 words : ?wlen 
 words = with Vect ["idris","agda","haskell","miranda",
@@ -167,14 +168,75 @@ words = with Vect ["idris","agda","haskell","miranda",
          "koka","cobol"]
 
 wlen = proof search
+               
+runGame : String -> String -> Eff () [BULLSNCOWS NotRunning, RND, SYSTEM, STDIO]
+                    runGame w tr = do srand !time
+                                      new_word w
+                                      game tr
+                                      putStrLn (show !get)
 
-runGame : Eff () [BULLSNCOWS NotRunning, RND, SYSTEM, STDIO]
-runGame = do srand !time
-             let w = index !(rndFin _) words
-             new_word w
-             game
-             putStrLn (show !get)
+-----------------------------------------------------------------------
+-- SUBCODE
+-----------------------------------------------------------------------
+
+maybeIntToMaybeNat : Maybe Integer -> Maybe Nat
+maybeIntToMaybeNat Nothing = Nothing
+maybeIntToMaybeNat (Just x) = if (x >= 0)
+                                  then Just (cast {to=Nat} x)
+                                  else Nothing
+
+getMaybeInt : String -> Maybe Integer
+getMaybeInt str = if ( not (all isDigit (unpack str) ) )
+                      then Nothing
+                      else Just (cast str)
+
+getNatFirstArg : List String -> Maybe Nat
+getNatFirstArg xs = maybeIntToMaybeNat ( getMaybeInt ( fromMaybe "" (index' 1 xs) ) )
+
+getRndExcept : List Integer -> Eff Integer [RND]
+getRndExcept [] = rndInt 0 9
+getRndExcept xs = do
+    num <- rndInt 0 9
+    if (elem num xs)
+        then getRndExcept xs
+        else pure num
+
+getRndNumber : Eff (Integer, Integer, Integer, Integer) [RND]
+getRndNumber = do
+    n1 <- rndInt 1 9
+    n2 <- getRndExcept [n1]
+    n3 <- getRndExcept [n1, n2]
+    n4 <- getRndExcept [n1, n2, n3]
+    pure (n1, n2, n3, n4)
+
+numToString : (Integer, Integer, Integer, Integer) -> String
+numToString (d1, d2, d3, d4) = intToStr d1 ++ intToStr d2 ++
+                               intToStr d3 ++ intToStr d4
+    where
+        intToStr : Integer -> String
+        intToStr i = cast {to=String} i
+
+printArgs : Eff () [BULLSNCOWS NotRunning, RND, SYSTEM, STDIO, EXCEPTION String]
+printArgs = do  args <- getArgs
+                if (length args /= 2)
+                    then raise "Wrong number of arguments"
+                    else do
+                        let m_tries = getNatFirstArg args
+                        printLn m_tries
+                        if (m_tries == Nothing)
+                            then raise "Provided argument is not a natural number"
+                            else do
+                                let tries = fromMaybe 0 m_tries
+                                t <- time
+                                srand t
+                                (d1, d2, d3, d4) <- getRndNumber
+                                let word = numToString (d1, d2, d3, d4)
+                                try_word <- getStr
+                                printLn try_word
+                                printLn word
+                                printLn args
+                                printLn tries
+                                runGame word try_word
 
 main : IO ()
-main = run runGame
-
+main = run printArgs
