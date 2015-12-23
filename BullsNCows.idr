@@ -19,6 +19,7 @@ data BullsNCows : GState -> Type where
      GameWon  : String -> BullsNCows NotRunning
      GameLost : String -> BullsNCows NotRunning
      MkG      : (word : String) ->
+                (gue: List Char) ->
                 (guesses : Nat) ->
                 (got : List Char) ->
                 (missing : Vect m Char) ->
@@ -31,7 +32,7 @@ instance Show (BullsNCows s) where
     show Init = "Not ready yet"
     show (GameWon w) = "You won! Successfully guessed " ++ w
     show (GameLost w) = "You lost! The word was " ++ w
-    show (MkG w guesses got missing)
+    show (MkG w gue guesses got missing)
          = let w' = pack (map showGot (unpack w)) in
                w' ++ "\n\n" ++ show guesses ++ " guesses left"
       where showGot : Char -> Char
@@ -46,9 +47,9 @@ letters x with (strM x)
           = let xs' = assert_total (letters xs) in
                 if ((not (isAlpha y)) || (y `elem` xs')) then xs' else y :: xs'
 
-initState : (x : String) -> BullsNCows (Running 6 (length (letters x)))
-initState w = let xs = letters w in
-                  MkG w _ [] (fromList (letters w))
+initState : (x : String) -> (g : List Char) -> BullsNCows (Running 6 (length (letters x)))
+initState w g = let xs = letters w in
+                    MkG w g _ [] (fromList (letters w))
 
 -----------------------------------------------------------------------
 -- RULES
@@ -56,8 +57,7 @@ initState w = let xs = letters w in
 
 data BullsNCowsRules : Effect where
 
-     Guess : (x : Char) ->
-             sig BullsNCowsRules Bool
+     Guess : sig BullsNCowsRules Bool
                  (BullsNCows (Running (S g) (S w)))
                  (\inword =>
                         BullsNCows (case inword of
@@ -72,7 +72,8 @@ data BullsNCowsRules : Effect where
                 (BullsNCows (Running 0 g))
                 (BullsNCows NotRunning)
 
-     NewWord : (w : String) -> 
+     NewWord : (w : String) ->
+               (g: List Char) ->
                sig BullsNCowsRules () h (BullsNCows (Running 6 (length (letters w))))
 
      Get  : sig BullsNCowsRules h h
@@ -80,12 +81,12 @@ data BullsNCowsRules : Effect where
 BULLSNCOWS : GState -> EFFECT
 BULLSNCOWS h = MkEff (BullsNCows h) BullsNCowsRules
 
-guess : Char -> Eff Bool
-                [BULLSNCOWS (Running (S g) (S w))]
-                (\inword => [BULLSNCOWS (case inword of
-                                        True => Running (S g) w
-                                        False => Running g (S w))])
-guess c = call (Main.Guess c)
+guess : Eff Bool
+        [BULLSNCOWS (Running (S g) (S w))]
+        (\inword => [BULLSNCOWS (case inword of
+                                True => Running (S g) w
+                                False => Running g (S w))])
+guess = call (Main.Guess)
 
 won :  Eff () [BULLSNCOWS (Running g 0)] [BULLSNCOWS NotRunning]
 won = call Won
@@ -93,9 +94,9 @@ won = call Won
 lost : Eff () [BULLSNCOWS (Running 0 g)] [BULLSNCOWS NotRunning]
 lost = call Lost
 
-new_word : (w : String) -> Eff () [BULLSNCOWS h] 
-                                  [BULLSNCOWS (Running 6 (length (letters w)))]
-new_word w = call (NewWord w)
+new_word : (w : String) -> (g : List Char) -> Eff () [BULLSNCOWS h] 
+                                           [BULLSNCOWS (Running 6 (length (letters w)))]
+new_word w g = call (NewWord w g)
 
 get : Eff (BullsNCows h) [BULLSNCOWS h]
 get = call Get
@@ -117,16 +118,19 @@ shrink (y :: (x :: xs)) (There p) = y :: shrink (x :: xs) p
 -----------------------------------------------------------------------
 
 instance Handler BullsNCowsRules m where
-    handle (MkG w g got []) Won k = k () (GameWon w)
-    handle (MkG w Z got m) Lost k = k () (GameLost w)
+    handle (MkG w gue g got []) Won k = k () (GameWon w)
+    handle (MkG w gue Z got m) Lost k = k () (GameLost w)
 
     handle st Get k = k st st
-    handle st (NewWord w) k = k () (initState w)
+    handle st (NewWord w g) k = k () (initState w g)
 
-    handle (MkG w (S g) got m) (Guess x) k =
-      case isElem x m of
-           No _ => k False (MkG w _ got m)
-           Yes p => k True (MkG w _ (x :: got) (shrink m p))
+    handle (MkG w gue (S g) got m) (Guess) k =
+      case nonEmpty gue of
+           Yes _ => let x = head gue in
+                        case isElem x m of
+                             No _ => k False (MkG w (tail gue) _ got m)
+                             Yes p => k True (MkG w (tail gue) _ (x :: got) (shrink m p))
+           No _ => k False (MkG w gue _ got m)
 
 -----------------------------------------------------------------------
 -- USER INTERFACE 
@@ -141,16 +145,12 @@ game {w=Z} = won
 game {w=S _}
      = do putStrLn (show !get)
           putStr "Enter guess: "
-          let guess = trim !getStr
-          case choose (not (guess == "")) of
-               (Left p) => processGuess (strHead' guess (soRefl p))
-               (Right p) => do putStrLn "Invalid input!"
-                               game
+          processGuess
   where 
-    processGuess : Char -> Eff () [BULLSNCOWS (Running (S g) (S w)), STDIO] 
-                                  [BULLSNCOWS NotRunning, STDIO] 
-    processGuess {g} c {w}
-      = case !(guess c) of
+    processGuess : Eff () [BULLSNCOWS (Running (S g) (S w)), STDIO] 
+                          [BULLSNCOWS NotRunning, STDIO] 
+    processGuess {g} {w}
+      = case !(guess) of
              True => do putStrLn "Good guess!"
                         case w of
                              Z => won
@@ -170,8 +170,9 @@ wlen = proof search
 
 runGame : Eff () [BULLSNCOWS NotRunning, RND, SYSTEM, STDIO]
 runGame = do srand !time
-             let w = index !(rndFin _) words
-             new_word w
+             let word = !getStr
+             let try_word = unpack !getStr
+             new_word word try_word
              game
              putStrLn (show !get)
 
